@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Created by Marco Aicardi - marco [a] aicardi d0t org
+# (c) 2010
+#
+# Released under GPLv3 License - www.gnu.org/licenses/g...
+
+
 SOSTITUZIONIGREP="`dirname "$0"`/sostituzioni.grep"
 SOSTITUZIONI=`tempfile`
 INPUT=`tempfile`
