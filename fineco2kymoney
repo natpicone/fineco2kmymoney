@@ -1,0 +1,129 @@
+#!/bin/bash
+
+SOSTITUZIONIGREP="`dirname "$0"`/sostituzioni.grep"
+SOSTITUZIONI=`tempfile`
+INPUT=`tempfile`
+TMPFILE=`tempfile`
+
+cp /dev/stdin $INPUT
+
+function capitalize {
+	A=`echo "$1" | tr "[:upper:]" "[:lower:]"`
+	C=`echo "$A" | sed -r 's/\b(.)/\U\1/g'`
+	echo "$C"
+#	eval "$1=\"$C\""
+}
+
+rm "$SOSTITUZIONI" 2> /dev/null
+
+while read line
+do
+	echo $line | cut -d! -f1 >> "$SOSTITUZIONI"
+	# echo $line | cut -d! -f2 >> "`dirname "$0"`/sostituzioni"
+	# echo $line | cut -d! -f3 >> "`dirname "$0"`/sostituzioni"
+done < "$SOSTITUZIONIGREP"
+
+# Cerca di capire se il file è di un conto corrente o di una carta di credito
+HEADER=`xls2csv "$INPUT" | head -n 1`
+
+# Prende la data iniziale e finale dell'estratto
+DATAA=`xls2csv "$INPUT" | grep '[0-9][0-9]/[0-9][0-9]/[0-9][0-9]' | tail -n 1 | cut -d"," -f2 | cut -d"\"" -f2`
+DATAB=`xls2csv "$INPUT" | grep '[0-9][0-9]/[0-9][0-9]/[0-9][0-9]' | head -n 1 | cut -d"," -f2 | cut -d"\"" -f2`
+
+
+if [[ "$HEADER" =~ "Conto Corrente n." ]]; then
+	DATAA="${DATAA:0:2}-${DATAA:3:2}-${DATAA:6:4}"
+	DATAB="${DATAB:0:2}-${DATAB:3:2}-${DATAB:6:4}"
+	CONTO="Estratto conto dal $DATAA al $DATAB"
+	NOMECONTO="Fineco"
+	TIPO="Bank"
+	`dirname "$0"`/fineco2qif.py "$INPUT" > $TMPFILE
+elif [[ "$HEADER" =~ "Carta di credito n. 4030" ]]; then
+	CONTO="Carta di credito Marco ${DATAB:3:2}-20${DATAB:6:2}"
+	NOMECONTO="Carta di credito Visa"
+	TIPO="CCard"
+	`dirname "$0"`/carta2qif.py "$INPUT" > $TMPFILE
+elif [[ "$HEADER" =~ "Carta di credito n. 5300" ]]; then
+	CONTO="Carta di credito Francy ${DATAB:3:2}-20${DATAB:6:2}"
+	NOMECONTO="Carta di credito Mastercard"
+	TIPO="CCard"
+	`dirname "$0"`/carta2qif.py "$INPUT" > $TMPFILE
+fi
+
+# Scrittura dell'header
+echo "!Account"
+echo "N$NOMECONTO"
+echo "T$TIPO" 
+echo "^"
+echo ""
+
+LINEE=`cat $TMPFILE | wc -l`
+
+value=0;
+
+while read line
+do
+	value=`expr $value + 1`;
+
+
+	if [ "${line:0:1}" == "P" ]; then
+		# Linea del beneficiario
+		# Cerca una corrispondenza
+
+		f=0
+		MATCH=`echo "$line" | grep -f $SOSTITUZIONI -i -o`
+		# echo MATCH:  $MATCH
+		if [ "$MATCH" != "" ]; then
+			RISULTATO=`cat "$SOSTITUZIONIGREP" | grep -i "$MATCH"`
+			if [ "$RISULTATO" != "" ]; then
+				BEN=`echo "$RISULTATO" | cut -d! -f2`
+				CAT=`echo "$RISULTATO" | cut -d! -f3`
+				f=1
+				echo P$BEN
+				if [ "$CAT" != "" ]; then
+					echo L$CAT
+				fi
+			fi
+		fi
+
+
+		# Se non ha riconosciuto una sostituzione, cerca il pagamento o il bonifico
+		if [ "$f" == "0" ]; then
+			# Cerca ancora se c'è "Presso:" nella descrizione (Pagobancomat)
+			if [ "`echo $line | grep "Presso:"`" != "" ]; then
+				TEMP=${line#*"Presso:"}
+				if [ "`echo $line | grep "nessuna Commissione"`" != "" ]; then
+					line=P${TEMP%*"nessuna Commissione"}
+				else
+					line=P$TEMP
+				fi
+			# fi
+			# Cerca se c'è "Ben:" nella descrizione
+			elif [ "`echo $line | grep "^PBen: "`" != "" ]; then
+				TEMP=${line#*"Ben: "}
+				line=P${TEMP%" Ins:"*}
+			#fi
+			# Cerca se è un bonifico ricevuto
+			elif [ "`echo $line | grep "^POrd:"`" != "" ]; then
+				TEMP=${line#*"Ord:"}
+				line=P${TEMP%" Ben:"*}
+			else
+				echo ${line:1} >> beneficiari-sconosciuti
+			fi
+
+			# Se è carta di credito, capitalizza la scritta
+			if [ "$TIPO" == "CCard" ]; then
+				line=P$(capitalize "${line:1}")
+			fi
+
+			echo ${line}
+		fi
+	else
+		echo $line
+	fi
+
+done < "$TMPFILE"
+
+rm $TMPFILE
+rm $INPUT
+rm $SOSTITUZIONI
