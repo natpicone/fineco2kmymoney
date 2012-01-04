@@ -7,9 +7,9 @@
 
 
 SOSTITUZIONIGREP="`dirname "$0"`/sostituzioni.grep"
-SOSTITUZIONI=`tempfile`
-INPUT=`tempfile`
-TMPFILE=`tempfile`
+SOSTITUZIONI=`mktemp`
+INPUT=`mktemp`
+TMPFILE=`mktemp`
 
 cp /dev/stdin $INPUT
 
